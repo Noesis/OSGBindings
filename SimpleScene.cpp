@@ -62,7 +62,6 @@ int main( int argc, char** argv )
     viewer.addEventHandler( new osgViewer::StatsHandler );
     viewer.addEventHandler( new osgViewer::WindowSizeHandler );
     viewer.setSceneData( root.get() );
-    viewer.setUpViewInWindow( 50, 50, 800, 600 );
     //viewer.setThreadingModel( osgViewer::Viewer::SingleThreaded );
     viewer.realize();
     
