@@ -11,7 +11,7 @@
 #include <NsCore/NsSystem.h>
 #include <NsCore/NsConfig.h>
 #include <NsRender/IRenderTarget2D.h>
-#include <NsRender/IGLRenderSystem.h>
+#include <NsRender/GLRenderSystemApi.h>
 #include <NsResource/IResourceSystem.h>
 #include <NsDrawing/IVGLSurface.h>
 #include <NsDrawing/IVGLSystem.h>
@@ -59,7 +59,6 @@ protected:
     virtual ~NoesisDrawable() {}
     
     virtual void initializeUI( osg::RenderInfo& renderInfo );
-    virtual void resetUI( osg::RenderInfo& renderInfo );
     virtual void registerEventHandlers() {}
     
     Noesis::Core::Ptr<Noesis::Gui::IRenderer> _uiRenderer;

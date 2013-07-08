@@ -30,6 +30,7 @@
 int main( int argc, char** argv )
 {
     osg::ArgumentParser arguments( &argc, argv );
+    osg::DisplaySettings::instance()->setMinimumNumStencilBits( 8 );
     
     std::string uiFile("Gui/Samples/CarHud.xaml");
     arguments.read( "--ui", uiFile );

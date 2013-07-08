@@ -1,6 +1,7 @@
 #include <windows.h>
 
 #include "NoesisWrapper.h"
+#include <osg/FrameBufferObject>
 #include <osgGA/EventVisitor>
 #include <iostream>
 #include <map>
@@ -16,15 +17,40 @@ using namespace Noesis::Drawing;
 // enable updating and rendering in different threads
 #define PARALLEL_UPDATING_AND_RENDERING 1
 
-// The global flag to indicate if the system/context is already initialized
-bool g_noesisKernelInitialized = false;
-bool g_noesisContextInitialized = false;
-
+// The error handler
 void nsErrorHandler( const NsChar* filename, NsInt line, const NsChar* desc )
 {
     std::cout << filename << " (" << line << ") Error: " << desc << std::endl;
     exit( 0 );
 }
+
+// The system/context initializer
+class NoesisSystemManager : public osg::Referenced
+{
+public:
+    static NoesisSystemManager* instance()
+    {
+        static osg::ref_ptr<NoesisSystemManager> s_instance = new NoesisSystemManager;
+        return s_instance.get();
+    }
+
+    static bool contextInitialized;
+
+protected:
+    NoesisSystemManager()
+    {
+        Noesis::Core::SetErrorHandler( nsErrorHandler );
+        NsConfigValue( "Render.RenderSystem", "Render", "GL" );
+        NsGetKernel()->Init();
+    }
+
+    virtual ~NoesisSystemManager()
+    {
+        //NsGetKernel()->Shutdown();  // FIXME: will crash here?
+    }
+};
+
+bool NoesisSystemManager::contextInitialized = false;
 
 void NoesisEventCallback::event( osg::NodeVisitor* nv, osg::Drawable* drawable )
 {
@@ -80,7 +106,6 @@ void NoesisEventCallback::event( osg::NodeVisitor* nv, osg::Drawable* drawable )
             if ( noesis->isValid() )
             {
                 // Updat the renderer
-                noesis->getUIRenderer()->WaitForRender();
                 noesis->getUIRenderer()->Update( ea.getTime() );
             }
 #endif
@@ -156,17 +181,11 @@ NoesisDrawable::NoesisDrawable( const std::string& uiFile )
 :   _uiFileName(uiFile), _width(800), _height(600),
     _activeContextID(0), _initialized(false), _dirty(false)
 {
-    if ( !g_noesisKernelInitialized )
-    {
-        Noesis::Core::SetErrorHandler( nsErrorHandler );
-        NsConfigValue( "Render.RenderSystem", "Render", "GL" );
-        NsGetKernel()->Init();
-        g_noesisKernelInitialized = true;
-    }
-    
+    NoesisSystemManager::instance();
     setEventCallback( new NoesisEventCallback );
     setSupportsDisplayList( false );
     getOrCreateStateSet()->setMode( GL_LIGHTING, osg::StateAttribute::OFF );
+    getOrCreateStateSet()->setAttribute( new osg::Program );
 }
 
 NoesisDrawable::NoesisDrawable( const NoesisDrawable& copy, const osg::CopyOp& copyop )
@@ -182,15 +201,12 @@ void NoesisDrawable::drawImplementation( osg::RenderInfo& renderInfo ) const
     unsigned int contextID = renderInfo.getContextID();
     if ( !_initialized )
     {
-        // Create an OpenGL context that will be used by NoesisGui
-        if ( !g_noesisContextInitialized )
+        if ( !NoesisSystemManager::contextInitialized )
         {
-            HDC hDC = wglGetCurrentDC();
-            IGLRenderSystem::SetContext( hDC, wglCreateContext(hDC) );
             NsGetKernel()->InitSystems();
-            g_noesisContextInitialized = true;
+            NoesisSystemManager::contextInitialized = true;
         }
-        
+
         NoesisDrawable* constMe = const_cast<NoesisDrawable*>( this );
         constMe->initializeUI( renderInfo );
         constMe->registerEventHandlers();
@@ -201,25 +217,41 @@ void NoesisDrawable::drawImplementation( osg::RenderInfo& renderInfo ) const
     {
         if ( _dirty )
         {
-            const_cast<NoesisDrawable*>(this)->resetUI( renderInfo );
+            _uiRenderer->SetSize( _width, _height );
             _dirty = false;
         }
         
         osg::State* state = renderInfo.getState();
         state->disableAllVertexArrays();
-        state->disableTexCoordPointer( 0 );
+        
+        // Make sure the client unit and active unit are unified
+        state->setClientActiveTextureUnit( 0 );
+        state->setActiveTextureUnit( 0 );
         
 #if !PARALLEL_UPDATING_AND_RENDERING
         // Update
         NsGetKernel()->Tick();
-        _uiRenderer->WaitForRender();
-        
+
         osg::FrameStamp* fs = renderInfo.getView()->getFrameStamp();
         if ( fs ) _uiRenderer->Update( fs->getSimulationTime() );
 #endif
+        // Obtain commands
+        RenderCommands renderCommands = _uiRenderer->WaitForUpdate();
+        osg::FBOExtensions* fbo = osg::FBOExtensions::instance(contextID, true);
+
+        // Render offscreen
+        if ( fbo )
+        {
+            NsGetSystem<IRenderSystem>()->SyncState();
+            _uiRenderer->Render( renderCommands.offscreenCommands.GetPtr() );
+            fbo->glBindFramebuffer( GL_FRAMEBUFFER_EXT, 0 );
+        }
+
         // Render
-        RenderCommands* commands = _uiRenderer->WaitForUpdate();
-        if ( commands ) _uiRenderer->Render( commands );
+        NsGetSystem<IRenderSystem>()->SyncState();
+        _uiRenderer->Render( renderCommands.commands.GetPtr() );
+
+        // FIXME!! not correct at present
     }
     else
         std::cout << "Multiple contexts are not supported at present!" << std::endl;
@@ -232,7 +264,8 @@ void NoesisDrawable::releaseGLObjects( osg::State* state ) const
         osg::GraphicsContext* gc = state->getGraphicsContext();
         if ( gc->makeCurrent() )
         {
-            //NsGetKernel()->Shutdown();  // FIXME: will crash here?
+            NoesisDrawable* constMe = const_cast<NoesisDrawable*>( this );
+            constMe->_uiRenderer.Reset();
             gc->releaseContext();
         }
     }
@@ -241,20 +274,16 @@ void NoesisDrawable::releaseGLObjects( osg::State* state ) const
 void NoesisDrawable::initializeUI( osg::RenderInfo& renderInfo )
 {
     // Load the .xaml resource
+#if 0
     Ptr<IUIResource> guiResource = NsDynamicCast< Ptr<IUIResource> >(
         NsGetSystem<IResourceSystem>()->Load(_uiFileName.c_str()) );
     _uiRoot.Reset( NsStaticCast<UIElement*>( guiResource->GetRoot()) );
+#else
+    _uiRoot = LoadXaml<UIElement>( _uiFileName.c_str() );
+#endif
     
     // Create the UI renderer
     _uiRenderer = CreateRenderer( _uiRoot.GetPtr() );
     _uiRenderer->SetAntialiasingMode( Noesis::Gui::AntialiasingMode_PPAA );
-    resetUI( renderInfo );
-}
-
-void NoesisDrawable::resetUI( osg::RenderInfo& renderInfo )
-{
-    // Create surface for rendering vector graphics
-    Ptr<IRenderTarget2D> rt = NsGetSystem<IGLRenderSystem>()->WrapRenderTarget( 0, _width, _height );
-    Ptr<IVGLSurface> surface = NsGetSystem<IVGLSystem>()->CreateSurface( rt.GetPtr() );
-    _uiRenderer->SetSurface( surface.GetPtr() );
+    _uiRenderer->SetSize( _width, _height );
 }

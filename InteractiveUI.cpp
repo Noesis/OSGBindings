@@ -79,8 +79,9 @@ protected:
 int main( int argc, char** argv )
 {
     osg::ArgumentParser arguments( &argc, argv );
+    osg::DisplaySettings::instance()->setMinimumNumStencilBits( 8 );
     
-    std::string uiFile("Gui/Samples/SDKTutorial/UI.xaml");
+    std::string uiFile("Gui/Tutorials/Integration/DX9/UI.xaml");
     arguments.read( "--ui", uiFile );
     
     osg::ref_ptr<osg::Node> scene = osgDB::readNodeFiles(arguments);
