@@ -241,17 +241,27 @@ void NoesisDrawable::drawImplementation( osg::RenderInfo& renderInfo ) const
 
         // Render offscreen
         if ( fbo )
-        {
-            NsGetSystem<IRenderSystem>()->SyncState();
+        {;
             _uiRenderer->Render( renderCommands.offscreenCommands.GetPtr() );
             fbo->glBindFramebuffer( GL_FRAMEBUFFER_EXT, 0 );
         }
 
         // Render
-        NsGetSystem<IRenderSystem>()->SyncState();
         _uiRenderer->Render( renderCommands.commands.GetPtr() );
 
-        // FIXME!! not correct at present
+        // Restore buffer states
+        osg::GLBufferObject::Extensions* buf = osg::GLBufferObject::getExtensions(contextID, true);
+        buf->glBindBuffer( GL_ARRAY_BUFFER_ARB, 0 );
+        buf->glBindBuffer( GL_ELEMENT_ARRAY_BUFFER_ARB, 0 );
+
+        osg::GL2Extensions* gl2 = osg::GL2Extensions::Get(contextID, true);
+        gl2->glDisableVertexAttribArray( 0 );
+        gl2->glDisableVertexAttribArray( 1 );
+        gl2->glDisableVertexAttribArray( 2 );
+        gl2->glDisableVertexAttribArray( 3 );
+        gl2->glDisableVertexAttribArray( 4 );
+        gl2->glDisableVertexAttribArray( 5 );
+        gl2->glDisableVertexAttribArray( 6 );
     }
     else
         std::cout << "Multiple contexts are not supported at present!" << std::endl;
